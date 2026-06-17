@@ -85,6 +85,35 @@ Cada servidor de aplicación (157 y 158) expone los mismos 3 endpoints:
 
 ---
 
+## Server-157 — App 1 (Node.js + PM2)
+
+> Configuración idéntica a server-158. La única diferencia es el archivo `.env`.
+
+```bash
+ssh adming6@192.168.100.157
+```
+
+El `.env` debe tener:
+```env
+PORT=3001
+APP_NAME=app1-server157   # <-- única diferencia
+DB_HOST=192.168.100.159
+DB_PORT=3306
+DB_USER=appuser
+DB_PASS=App1234!
+DB_NAME=proyecto_db
+```
+
+El proceso de PM2:
+```bash
+pm2 start index.js --name app1-server157
+pm2 startup
+pm2 save
+```
+
+
+---
+
 ## Server-158 — App 2 (Node.js + PM2)
 
 ### Conexión
@@ -322,34 +351,6 @@ sudo systemctl start prometheus-node-exporter
 
 # Verificar que las métricas están disponibles
 curl http://localhost:9100/metrics | head -5
-```
-
----
-
-## Server-157 — App 1 (Node.js + PM2)
-
-> Configuración idéntica a server-158. La única diferencia es el archivo `.env`.
-
-```bash
-ssh adming6@192.168.100.157
-```
-
-El `.env` debe tener:
-```env
-PORT=3001
-APP_NAME=app1-server157   # <-- única diferencia
-DB_HOST=192.168.100.159
-DB_PORT=3306
-DB_USER=appuser
-DB_PASS=App1234!
-DB_NAME=proyecto_db
-```
-
-El proceso de PM2:
-```bash
-pm2 start index.js --name app1-server157
-pm2 startup
-pm2 save
 ```
 
 ---
