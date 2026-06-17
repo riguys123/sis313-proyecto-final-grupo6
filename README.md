@@ -87,16 +87,64 @@ Cada servidor de aplicación (157 y 158) expone los mismos 3 endpoints:
 
 ## Server-157 — App 1 (Node.js + PM2)
 
-> Configuración idéntica a server-158. La única diferencia es el archivo `.env`.
-
+### Conexión
 ```bash
+# Primero entrar al jump server
+ssh usrproxy@201.131.45.42
+
+# Luego conectarse a server-157
 ssh adming6@192.168.100.157
 ```
 
-El `.env` debe tener:
+### Instalación de Node.js 18
+```bash
+# Actualizar repositorios
+sudo apt update
+
+# Agregar repositorio oficial de NodeSource para Node.js 18
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+
+# Instalar Node.js
+sudo apt install nodejs -y
+
+# Verificar versiones instaladas
+node --version   # v18.x.x
+npm --version    # 10.x.x
+```
+
+### Instalación de PM2
+```bash
+# Instalar PM2 globalmente — gestor de procesos para Node.js en producción
+# Permite que la app se reinicie automáticamente si falla
+sudo npm install -g pm2
+
+# Verificar instalación
+pm2 --version
+```
+
+### Crear la aplicación
+```bash
+# Crear directorio del proyecto
+mkdir -p ~/app && cd ~/app
+
+# Inicializar proyecto Node.js
+npm init -y
+
+# Instalar dependencias:
+# express — framework web
+# mysql2  — cliente MariaDB con soporte de promesas
+# dotenv  — carga variables de entorno desde .env
+npm install express mysql2 dotenv
+```
+
+### Archivo de variables de entorno
+```bash
+nano ~/app/.env
+```
+
 ```env
 PORT=3001
-APP_NAME=app1-server157   # <-- única diferencia
+APP_NAME=app1-server157
 DB_HOST=192.168.100.159
 DB_PORT=3306
 DB_USER=appuser
@@ -104,11 +152,175 @@ DB_PASS=App1234!
 DB_NAME=proyecto_db
 ```
 
-El proceso de PM2:
+> `DB_HOST` apunta al server-159 (MariaDB Master). Las credenciales corresponden al usuario `appuser` creado en la BD con permisos sobre `proyecto_db`.
+
+### Código principal — index.js
 ```bash
+nano ~/app/index.js
+```
+
+```javascript
+const express = require('express');
+const mysql = require('mysql2/promise');
+require('dotenv').config();
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+app.use(express.json());
+
+// Pool de conexiones a MariaDB — reutiliza conexiones en lugar de abrir una nueva por cada request
+const pool = mysql.createPool({
+  host:     process.env.DB_HOST,
+  port:     process.env.DB_PORT,
+  user:     process.env.DB_USER,
+  password: process.env.DB_PASS,
+  database: process.env.DB_NAME,
+  waitForConnections: true,
+  connectionLimit: 10,
+});
+
+// --- MICROSERVICIO USUARIOS ---
+app.get('/usuarios', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM usuarios');
+    res.json({ ok: true, servicio: 'usuarios', vm: process.env.APP_NAME, data: rows });
+  } catch(err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+app.post('/usuarios', async (req, res) => {
+  try {
+    const { nombre, email } = req.body;
+    const [r] = await pool.query('INSERT INTO usuarios (nombre,email) VALUES (?,?)', [nombre, email]);
+    res.status(201).json({ ok: true, id: r.insertId });
+  } catch(err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+// --- MICROSERVICIO PAGOS ---
+app.get('/pagos', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM pagos');
+    res.json({ ok: true, servicio: 'pagos', vm: process.env.APP_NAME, data: rows });
+  } catch(err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+app.post('/pagos', async (req, res) => {
+  try {
+    const { usuario_id, monto, concepto } = req.body;
+    const [r] = await pool.query('INSERT INTO pagos (usuario_id,monto,concepto) VALUES (?,?,?)', [usuario_id, monto, concepto]);
+    res.status(201).json({ ok: true, id: r.insertId });
+  } catch(err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+// --- MICROSERVICIO NOTIFICACIONES ---
+app.get('/notificaciones', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM notificaciones');
+    res.json({ ok: true, servicio: 'notificaciones', vm: process.env.APP_NAME, data: rows });
+  } catch(err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+// --- HEALTH Y ROOT ---
+app.get('/', (req, res) => {
+  res.json({ servicio: 'microservicios', vm: process.env.APP_NAME, estado: 'operativo' });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', vm: process.env.APP_NAME, puerto: PORT });
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log('App corriendo en puerto ' + PORT + ' — ' + process.env.APP_NAME);
+});
+```
+
+### Lanzar con PM2
+```bash
+cd ~/app
+
+# Iniciar la app con PM2 y asignarle un nombre identificable
 pm2 start index.js --name app1-server157
+
+# Verificar que está corriendo
+pm2 list
+```
+
+Resultado esperado:
+```
+┌────┬──────────────────┬────────┬───────────┐
+│ id │ name             │ mode   │ status    │
+├────┼──────────────────┼────────┼───────────┤
+│  0 │ app1-server157   │ fork   │ online    │
+└────┴──────────────────┴────────┴───────────┘
+```
+
+```bash
+# Configurar PM2 para que inicie automáticamente al reiniciar el servidor
 pm2 startup
+# Copiar y ejecutar el comando que PM2 muestra en pantalla
+
+# Guardar la lista de procesos actual
 pm2 save
+```
+
+### Verificar endpoints
+```bash
+curl http://localhost:3001/
+curl http://localhost:3001/health
+curl http://localhost:3001/usuarios
+curl http://localhost:3001/pagos
+curl http://localhost:3001/notificaciones
+```
+
+Resultado esperado en `/usuarios`:
+```json
+{"ok":true,"servicio":"usuarios","vm":"app1-server157","data":[...]}
+```
+
+### Firewall UFW
+```bash
+# Denegar todo el tráfico entrante por defecto (principio de mínimo privilegio)
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+
+# Permitir solo los puertos necesarios
+sudo ufw allow 22/tcp    # SSH
+sudo ufw allow 3001/tcp  # App Node.js
+sudo ufw allow 9100/tcp  # Node Exporter (métricas para Prometheus)
+
+# Activar firewall
+sudo ufw --force enable
+sudo ufw status verbose
+```
+
+### Hardening SSH
+```bash
+# Deshabilitar login como root — elimina el usuario más atacado
+sudo sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+
+# Limitar intentos de autenticación fallidos a 3
+sudo sed -i 's/^#*MaxAuthTries.*/MaxAuthTries 3/' /etc/ssh/sshd_config
+
+sudo systemctl restart ssh
+
+# Verificar que los cambios fueron aplicados
+grep -E "^(PermitRootLogin|MaxAuthTries)" /etc/ssh/sshd_config
+```
+
+Resultado esperado:
+```
+PermitRootLogin no
+MaxAuthTries 3
+```
+
+### Node Exporter (métricas para Prometheus)
+```bash
+# Instalar agente que expone métricas del SO en el puerto 9100
+sudo apt install prometheus-node-exporter -y
+sudo systemctl enable prometheus-node-exporter
+sudo systemctl start prometheus-node-exporter
+
+# Verificar que las métricas están disponibles
+curl http://localhost:9100/metrics | head -5
 ```
 
 
